@@ -31,22 +31,26 @@ describe("single-device sessions", () => {
   });
 
   test("lifecycle actions share the session policy", () => {
-    for (const platform of ["ios", "android"] as const) {
+    const cases = [
+      ["ios", "boot", true],
+      ["ios", "shutdown", true],
+      ["ios", "remove", false],
+      ["android", "boot", false],
+      ["android", "shutdown", true],
+      ["android", "remove", false],
+    ] as const;
+    for (const [platform, action, allowed] of cases) {
       const policy = { platform, id: ID };
-      const device = { platform, id: ID };
-      for (const action of ["boot", "shutdown", "remove"] as const) {
-        expect(allowsSessionDeviceAction(undefined, action, device)).toBe(true);
-        expect(allowsSessionDeviceAction(policy, action, device)).toBe(
-          action === "shutdown" || (action === "boot" && platform === "ios"),
-        );
-        expect(allowsSessionDeviceAction(policy, action, { ...device, id: "other" })).toBe(false);
-        expect(
-          allowsSessionDeviceAction(policy, action, {
-            ...device,
-            platform: platform === "ios" ? "android" : "ios",
-          }),
-        ).toBe(false);
-      }
+      const device = { platform, id: platform === "ios" ? ID.toLowerCase() : ID };
+      expect(allowsSessionDeviceAction(undefined, action, device)).toBe(true);
+      expect(allowsSessionDeviceAction(policy, action, device)).toBe(allowed);
+      expect(allowsSessionDeviceAction(policy, action, { ...device, id: "other" })).toBe(false);
+      expect(
+        allowsSessionDeviceAction(policy, action, {
+          ...device,
+          platform: platform === "ios" ? "android" : "ios",
+        }),
+      ).toBe(false);
     }
   });
 

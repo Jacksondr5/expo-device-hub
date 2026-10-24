@@ -55,6 +55,31 @@ test("rejects query, helper-path, lifecycle, and WebKit escapes before device wo
   }
 });
 
+test("lifecycle routes share body validation and refusal responses", async () => {
+  for (const action of ["start", "shutdown"]) {
+    for (const body of [
+      "{",
+      "null",
+      "{}",
+      JSON.stringify({ udid: "booted" }),
+      JSON.stringify({ udid: [OTHER] }),
+    ]) {
+      const response = await fetch(`${origin}/grid/api/${action}`, { method: "POST", body });
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({ ok: false, error: "Invalid or missing udid" });
+    }
+    const response = await fetch(`${origin}/grid/api/${action}`, {
+      method: "POST",
+      body: JSON.stringify({ udid: OTHER }),
+    });
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({
+      ok: false,
+      error: "Device is outside this single-device session.",
+    });
+  }
+});
+
 test("allows observational requests with no target or the pinned target", async () => {
   for (const query of ["", `?device=${DEVICE.toLowerCase()}`]) {
     const response = await fetch(`${origin}/api/event-log${query}`);

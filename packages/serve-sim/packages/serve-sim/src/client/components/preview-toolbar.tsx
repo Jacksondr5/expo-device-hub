@@ -5,14 +5,10 @@ const PANEL =
 
 // @ref LLP 0000#mobile-serve-sim-layout — one vertical toolbar overlays the device without consuming its layout space.
 export function PreviewToolbar({
-  mobile,
-  keyboard,
   keyboardRaised,
   viewportHeight,
   children,
 }: {
-  mobile: boolean;
-  keyboard?: ReactNode;
   keyboardRaised: boolean;
   viewportHeight: number;
   children: ReactNode;
@@ -23,19 +19,14 @@ export function PreviewToolbar({
       role="group"
       aria-label="Preview controls"
       className={`flex flex-col overflow-y-auto ${PANEL}`}
-      style={
-        mobile
-          ? {
-              maxHeight: `max(0px, calc(${viewportHeight}px - env(safe-area-inset-top, 0px) - 24px))`,
-            }
-          : undefined
-      }
+      style={{
+        maxHeight: `max(0px, calc(${viewportHeight}px - env(safe-area-inset-top, 0px) - 24px))`,
+      }}
       onMouseDownCapture={(event) => {
         // Keep the capture input focused without canceling touch scrolling.
-        if (mobile && keyboardRaised) event.preventDefault();
+        if (keyboardRaised) event.preventDefault();
       }}
     >
-      {keyboard}
       {children}
     </div>
   );

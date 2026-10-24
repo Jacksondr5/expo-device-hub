@@ -1727,7 +1727,7 @@ function AppWithConfig({
   const frameWidth = presentation
     ? getPresentationFrameWidth(
         viewportWidth,
-        containerHeight,
+        mobileLayout ? containerHeight : stableViewportHeight,
         containerAspectRatioValue,
         presentationInset,
       )
@@ -1744,13 +1744,54 @@ function AppWithConfig({
     scaling,
   );
 
+  const previewControls = (
+    <>
+      {coarsePointer && <KeyboardToggleButton open={keyboardOpen} onClick={toggleKeyboard} />}
+      <ShareSessionButton config={config} />
+      <IconButton onClick={onEnterPresentation} aria-label="Full screen" title="Full screen">
+        <Maximize2 size={18} strokeWidth={1.75} />
+      </IconButton>
+      <IconButton
+        onClick={() => {
+          setDevtoolsOpen(false);
+          setPanelOpen((o) => !o);
+        }}
+        aria-label="Open tools panel"
+        aria-pressed={panelOpen}
+        title="Tools"
+      >
+        <PanelRight size={18} strokeWidth={1.75} />
+      </IconButton>
+      <IconButton
+        onClick={() => {
+          setPanelOpen(false);
+          setDevtoolsOpen((o) => !o);
+        }}
+        className="max-sm:hidden"
+        aria-label="Open WebKit DevTools"
+        aria-pressed={devtoolsOpen}
+        title="WebKit DevTools"
+      >
+        <Globe size={18} strokeWidth={1.75} />
+      </IconButton>
+      <IconButton
+        onClick={() => setLogsOpen((o) => !o)}
+        aria-label="Open device logs"
+        aria-pressed={logsOpen}
+        title="Logs"
+      >
+        <ScrollText size={18} strokeWidth={1.75} />
+      </IconButton>
+    </>
+  );
+
   return (
     <AxStateProvider endpoint={axOverlayEnabled ? config?.axEndpoint : undefined}>
       <div
         ref={scrollContainerRef}
         data-input-socket-open={inputSocketOpen}
         className={`flex flex-col items-center h-dvh bg-page font-system box-border ${
-          phoneKeyboardRaised && !mobileLayout && !presentation
+          phoneKeyboardRaised && !mobileLayout
             ? "justify-start overflow-y-hidden"
             : "justify-center"
         } ${presentation ? "gap-0" : "pt-[max(56px,calc(env(safe-area-inset-top,0px)+56px))] pb-[max(8px,env(safe-area-inset-bottom,0px))] sm:py-6 gap-3"}`}
@@ -1771,11 +1812,13 @@ function AppWithConfig({
           transition: resizing || scaling ? "none" : SIMULATOR_RESIZE_PAGE_TRANSITION,
         }}
       >
-        {phoneKeyboardRaised && !mobileLayout && !presentation && (
+        {phoneKeyboardRaised && !mobileLayout && (
           <div
             aria-hidden
             style={{
-              height: "env(safe-area-inset-top, 0px)",
+              height: presentation
+                ? "max(env(safe-area-inset-top, 0px), 68px)"
+                : "env(safe-area-inset-top, 0px)",
               flexShrink: 0,
               width: "100%",
             }}
@@ -2048,7 +2091,7 @@ function AppWithConfig({
           {!presentation && (
             <div
               ref={mobileActionsRef}
-              className="inline-flex shrink-0 flex-wrap items-center justify-center gap-2 max-w-[calc(100vw-8px)] sm:max-w-full pb-1 sm:pb-0"
+              className={`inline-flex flex-wrap items-center justify-center gap-2 pb-1 sm:pb-0 ${mobileLayout ? "shrink-0 max-w-[calc(100vw-8px)]" : "max-w-full"}`}
               style={
                 mobileLayout
                   ? { width: "max-content", display: phoneKeyboardRaised ? "none" : undefined }
@@ -2166,7 +2209,7 @@ function AppWithConfig({
         {!presentation && (
           <>
             <div
-              className="fixed top-[calc(env(safe-area-inset-top,0px)+12px)] sm:top-3 [transition:right_0.24s_cubic-bezier(0.22,1,0.36,1)] z-30"
+              className={`fixed [transition:right_0.24s_cubic-bezier(0.22,1,0.36,1)] z-30 ${mobileLayout ? "top-[calc(env(safe-area-inset-top,0px)+12px)]" : "top-3 flex flex-row sm:flex-col gap-1 p-1 bg-panel-bg border border-white/8 rounded-[10px] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)]"}`}
               style={{
                 right:
                   PANEL_EDGE_OFFSET +
@@ -2175,56 +2218,16 @@ function AppWithConfig({
                     : 0),
               }}
             >
-              <PreviewToolbar
-                mobile={mobileLayout}
-                keyboard={
-                  coarsePointer ? (
-                    <KeyboardToggleButton open={keyboardOpen} onClick={toggleKeyboard} />
-                  ) : undefined
-                }
-                keyboardRaised={phoneKeyboardRaised}
-                viewportHeight={containerHeight}
-              >
-                <ShareSessionButton config={config} />
-                <IconButton
-                  onClick={onEnterPresentation}
-                  aria-label="Full screen"
-                  title="Full screen"
+              {mobileLayout ? (
+                <PreviewToolbar
+                  keyboardRaised={phoneKeyboardRaised}
+                  viewportHeight={containerHeight}
                 >
-                  <Maximize2 size={18} strokeWidth={1.75} />
-                </IconButton>
-                <IconButton
-                  onClick={() => {
-                    setDevtoolsOpen(false);
-                    setPanelOpen((o) => !o);
-                  }}
-                  aria-label="Open tools panel"
-                  aria-pressed={panelOpen}
-                  title="Tools"
-                >
-                  <PanelRight size={18} strokeWidth={1.75} />
-                </IconButton>
-                <IconButton
-                  onClick={() => {
-                    setPanelOpen(false);
-                    setDevtoolsOpen((o) => !o);
-                  }}
-                  className="max-sm:hidden"
-                  aria-label="Open WebKit DevTools"
-                  aria-pressed={devtoolsOpen}
-                  title="WebKit DevTools"
-                >
-                  <Globe size={18} strokeWidth={1.75} />
-                </IconButton>
-                <IconButton
-                  onClick={() => setLogsOpen((o) => !o)}
-                  aria-label="Open device logs"
-                  aria-pressed={logsOpen}
-                  title="Logs"
-                >
-                  <ScrollText size={18} strokeWidth={1.75} />
-                </IconButton>
-              </PreviewToolbar>
+                  {previewControls}
+                </PreviewToolbar>
+              ) : (
+                previewControls
+              )}
             </div>
 
             <ToolsPanel

@@ -76,6 +76,13 @@ toggle. It overlays the device without taking layout space. The sidebar toggle r
 On mobile widths, presentation mode keeps its existing controls and fits the visible
 viewport, including while the phone keyboard is raised. Tablet and desktop widths
 keep their existing toolbar rendering and presentation sizing.
+For flat mobile previews, the normal fitted width is retained while presentation
+unmounts its controls. A single layout transform animates the device between its
+normal and presentation bounds; an interrupted animation restarts from its current
+visible bounds rather than its old target. The initial fit and reduced motion do
+not animate. Desktop and 3D Duo previews keep their existing animation path.
+[observed: ServeSim `src/client/hooks/use-flip-layout.ts`,
+`src/client/hooks/use-mobile-simulator-size.ts`, and `src/client/utils/layout-transition.ts`]
 [observed: `src/client/client.tsx` and `src/client/hooks/use-mobile-simulator-size.ts`
 in ServeSim; confirmed: Gabe Debes, 2026-10-23, requested mobile layout]
 

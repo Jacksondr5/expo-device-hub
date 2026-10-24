@@ -194,8 +194,7 @@ type SimctlAllList = {
   devices: Record<string, Array<Omit<SimctlDevice, "runtime">>>;
 };
 
-type ShutdownRequestBody = { udid?: string };
-type StartRequestBody = { udid?: string };
+type DeviceLifecycleRequestBody = { udid?: unknown };
 type ReleaseRequestBody = { targetId?: string };
 type HighlightRequestBody = { targetId?: string; on?: boolean };
 /** Re-exported alias for the canonical device-state record in `./state`. */
@@ -2116,6 +2115,29 @@ export function simMiddleware(options?: SimMiddlewareOptions): SimMiddleware {
     }
   };
 
+  const resolveLifecycleDevice = (body: string, res: SimRes): string | null => {
+    const refuse = (status: number, error: string): null => {
+      res.writeHead(status, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: false, error }));
+      return null;
+    };
+    let udid: unknown;
+    try {
+      udid = (JSON.parse(body) as DeviceLifecycleRequestBody | null)?.udid;
+    } catch {}
+    if (
+      typeof udid !== "string" ||
+      !/^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/i.test(udid)
+    ) {
+      return refuse(400, "Invalid or missing udid");
+    }
+    try {
+      return policy?.resolveTarget(udid) ?? udid;
+    } catch {
+      return refuse(403, "Device is outside this single-device session.");
+    }
+  };
+
   const handleUiRequest: UiRequestHandler = async (payload) => {
     const p = { ...(payload as object) } as { device?: string; option?: string; value?: string };
     if (policy) p.device = policy.resolveTarget(p.device);
@@ -2529,26 +2551,8 @@ export function simMiddleware(options?: SimMiddlewareOptions): SimMiddleware {
         body += typeof chunk === "string" ? chunk : chunk.toString();
       });
       req.on("end", async () => {
-        let udid = "";
-        try {
-          udid = (JSON.parse(body) as ShutdownRequestBody).udid ?? "";
-        } catch {}
-        if (!/^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/i.test(udid)) {
-          res.writeHead(400, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ ok: false, error: "Invalid or missing udid" }));
-          return;
-        }
-        if (policy) {
-          try {
-            udid = policy.resolveTarget(udid);
-          } catch {
-            res.writeHead(403, { "Content-Type": "application/json" });
-            res.end(
-              JSON.stringify({ ok: false, error: "Device is outside this single-device session." }),
-            );
-            return;
-          }
-        }
+        const udid = resolveLifecycleDevice(body, res);
+        if (udid === null) return;
         // Stop our own in-process capture for this device first (no-op if it
         // isn't streamed here). This frees the native session immediately
         // rather than waiting for the next poll's reaper to notice.
@@ -2588,26 +2592,8 @@ export function simMiddleware(options?: SimMiddlewareOptions): SimMiddleware {
         body += typeof chunk === "string" ? chunk : chunk.toString();
       });
       req.on("end", () => {
-        let udid = "";
-        try {
-          udid = (JSON.parse(body) as StartRequestBody).udid ?? "";
-        } catch {}
-        if (!/^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/i.test(udid)) {
-          res.writeHead(400, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ ok: false, error: "Invalid or missing udid" }));
-          return;
-        }
-        if (policy) {
-          try {
-            udid = policy.resolveTarget(udid);
-          } catch {
-            res.writeHead(403, { "Content-Type": "application/json" });
-            res.end(
-              JSON.stringify({ ok: false, error: "Device is outside this single-device session." }),
-            );
-            return;
-          }
-        }
+        const udid = resolveLifecycleDevice(body, res);
+        if (udid === null) return;
         const port = req.socket.localPort ?? 0;
         void startDeviceInProcess(
           udid,

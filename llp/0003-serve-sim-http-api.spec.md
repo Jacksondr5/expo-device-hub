@@ -129,6 +129,9 @@ sidebar and every entry point that opens it are omitted. This restriction adds
 to the existing authentication and origin gates; it never grants access
 [observed: `src/middleware.ts`, `src/socket/server-control.ts`, `src/client/client.tsx`].
 
+Start and shutdown share lifecycle-body validation and refusal responses
+[observed: `src/middleware.ts`, `resolveLifecycleDevice`].
+
 The original simulator may reboot or start again. WebKit inspection is disabled
 because the bridge cannot reliably map its targets to a simulator UUID. The
 middleware uses same-origin helper routes in this mode. The restriction covers

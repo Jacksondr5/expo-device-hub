@@ -159,6 +159,9 @@ sidebar, toggle, creation picker or delete action, and a missing device does not
 cause selection of another device
 [observed: `packages/expo-device-hub/src/server/single-device.ts`, `src/Dashboard.tsx`].
 
+Boot, shutdown and remove share request parsing and one lifecycle policy check
+[observed: `src/server/index.ts`, `src/server/single-device.ts`].
+
 The Hub rejects create and delete requests, lifecycle requests for another
 identity, and every route or socket for the other platform. The iOS adapter
 passes serve-sim's single-device policy through without bypassing either token

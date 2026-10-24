@@ -80,7 +80,11 @@ For flat mobile previews, the normal fitted width is retained while presentation
 unmounts its controls. A single layout transform animates the device between its
 normal and presentation bounds; an interrupted animation restarts from its current
 visible bounds rather than its old target. The initial fit and reduced motion do
-not animate. Desktop and 3D Duo previews keep their existing animation path.
+not animate. Mobile hardware artwork and its screen opening use the current layout
+size in that same render; waiting for a ResizeObserver would leave their pixel
+rectangles at the previous size for a frame during keyboard fitting. Desktop
+keeps observed dimensions for its width transition, and 3D Duo keeps its existing
+animation path.
 [observed: ServeSim `src/client/hooks/use-flip-layout.ts`,
 `src/client/hooks/use-mobile-simulator-size.ts`, and `src/client/utils/layout-transition.ts`]
 [observed: `src/client/client.tsx` and `src/client/hooks/use-mobile-simulator-size.ts`

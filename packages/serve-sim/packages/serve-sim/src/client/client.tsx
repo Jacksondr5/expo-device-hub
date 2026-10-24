@@ -2049,11 +2049,12 @@ function AppWithConfig({
                     orientation={clipOrientation}
                     interactive
                     containerSize={
-                      // Measured, not computed: pixel rects can't self-correct the
-                      // way the percentage layout did.
-                      deviceRenderedWidth > 0 && deviceRenderedHeight > 0
-                        ? { width: deviceRenderedWidth, height: deviceRenderedHeight }
-                        : undefined
+                      // @ref LLP 0000#mobile-serve-sim-layout — fit frame pixels in the same render as their container.
+                      mobileFlipLayout
+                        ? { width: layoutWidth, height: layoutHeight }
+                        : deviceRenderedWidth > 0 && deviceRenderedHeight > 0
+                          ? { width: deviceRenderedWidth, height: deviceRenderedHeight }
+                          : undefined
                     }
                     onButton={handleChromeButton}
                     onCrownWheel={(deltaY, deltaMode) => {

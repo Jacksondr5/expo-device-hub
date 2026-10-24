@@ -4,6 +4,7 @@ import { parseCliOptions } from "../cli/options";
 import { configureClientShell } from "../client-shell";
 import type { HubDevice } from "../devices";
 import {
+  allowsSessionDeviceAction,
   filterSessionDevices,
   isSessionDevice,
   parseSingleDevice,
@@ -27,6 +28,26 @@ describe("single-device sessions", () => {
       platform: "ios",
       id: ID,
     });
+  });
+
+  test("lifecycle actions share the session policy", () => {
+    for (const platform of ["ios", "android"] as const) {
+      const policy = { platform, id: ID };
+      const device = { platform, id: ID };
+      for (const action of ["boot", "shutdown", "remove"] as const) {
+        expect(allowsSessionDeviceAction(undefined, action, device)).toBe(true);
+        expect(allowsSessionDeviceAction(policy, action, device)).toBe(
+          action === "shutdown" || (action === "boot" && platform === "ios"),
+        );
+        expect(allowsSessionDeviceAction(policy, action, { ...device, id: "other" })).toBe(false);
+        expect(
+          allowsSessionDeviceAction(policy, action, {
+            ...device,
+            platform: platform === "ios" ? "android" : "ios",
+          }),
+        ).toBe(false);
+      }
+    }
   });
 
   test("a refused socket cannot crash the host with a late protocol error", () => {

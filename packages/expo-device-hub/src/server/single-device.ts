@@ -1,6 +1,6 @@
 // @ref LLP 0013#single-device-sessions — session target and layout contract
 import { type PlatformFilter, parsePlatformFilter } from "../platform-filter";
-import type { HubDeviceList } from "./devices";
+import type { HubDevice, HubDeviceList } from "./devices";
 
 export type SingleDevice = { platform: PlatformFilter; id: string };
 
@@ -42,6 +42,16 @@ export function isSessionDevice(
 ): boolean {
   if (policy === undefined) return true;
   return platform === policy.platform && (platform === "ios" ? id.toUpperCase() : id) === policy.id;
+}
+
+export function allowsSessionDeviceAction(
+  policy: SingleDevice | undefined,
+  action: "boot" | "shutdown" | "remove",
+  device: Pick<HubDevice, "platform" | "id">,
+): boolean {
+  if (!policy) return true;
+  if (!isSessionDevice(policy, device.platform, device.id)) return false;
+  return action === "shutdown" || (action === "boot" && device.platform === "ios");
 }
 
 export function filterSessionDevices(

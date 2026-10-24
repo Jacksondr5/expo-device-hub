@@ -1892,7 +1892,10 @@ function AppWithConfig({
             </div>
           )}
           {presentation && !embedLocked && (
-            <PresentationControls onExit={onExitPresentation}>
+            <PresentationControls
+              onExit={onExitPresentation}
+              keyboardRaised={mobileLayout && phoneKeyboardRaised}
+            >
               {coarsePointer && (
                 <KeyboardToggleButton open={keyboardOpen} onClick={toggleKeyboard} />
               )}

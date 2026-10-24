@@ -74,7 +74,9 @@ is hidden and its space is given to the device; it returns when the keyboard clo
 The top-right mobile controls form one vertical toolbar, including the keyboard
 toggle. It overlays the device without taking layout space. The sidebar toggle remains separate.
 On mobile widths, presentation mode keeps its existing controls and fits the visible
-viewport, including while the phone keyboard is raised. Tablet and desktop widths
+viewport, including while the phone keyboard is raised. Mobile presentation controls
+retain the keyboard capture input’s focus so exiting does not dismiss the keyboard
+and trigger a second viewport refit. Tablet and desktop widths
 keep their existing toolbar rendering and presentation sizing.
 For flat mobile previews, the normal fitted width is retained while presentation
 unmounts its controls. A single layout transform animates the device between its

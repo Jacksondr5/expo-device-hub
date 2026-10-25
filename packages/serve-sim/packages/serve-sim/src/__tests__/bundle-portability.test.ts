@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { execFileSync } from "child_process";
+import { execFileSync, spawnSync } from "child_process";
+import { useTempStateDir } from "./helpers";
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 
@@ -53,6 +54,58 @@ describeIfBuilt("bundle portability", () => {
   test.each([...BUNDLES])("%s has no build-machine path baked in", (bundle) => {
     const js = readFileSync(join(PKG_DIR, bundle), "utf-8");
     expect(js).not.toContain(SRC_DIR);
+  });
+
+  test("the shipped Node middleware dispatches through its packaged CLI", () => {
+    const state = useTempStateDir();
+    try {
+      const result = spawnSync(
+        "node",
+        [
+          "--input-type=module",
+          "-e",
+          `import assert from 'node:assert/strict';
+          import http from 'node:http';
+          import { WebSocket, WebSocketServer } from 'ws';
+          import { simMiddleware } from './dist/middleware.js';
+          const token = 'bundle-dispatch-test';
+          const udid = '00000000-0000-0000-0000-000000000001';
+          const middleware = simMiddleware({ basePath: '/', execToken: token, device: udid });
+          const server = http.createServer();
+          const sockets = new WebSocketServer({ noServer: true });
+          server.on('upgrade', (req, socket, head) => {
+            const request = new Request('http://127.0.0.1' + req.url, { headers: req.headers });
+            sockets.handleUpgrade(req, socket, head, ws => middleware.handleWebSocket(request, ws));
+          });
+          await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+          try {
+            const reply = await new Promise((resolve, reject) => {
+              const ws = new WebSocket('ws://127.0.0.1:' + server.address().port + '/exec-ws',
+                ['serve-sim.token.' + token]);
+              ws.on('error', reject);
+              ws.on('message', raw => {
+                const value = JSON.parse(String(raw));
+                if (value.ready) ws.send(JSON.stringify({ id: 1, action: 'permissions.list', params: { udid } }));
+                if (value.id === 1) { ws.close(); resolve(value); }
+              });
+            });
+            assert.equal(reply.error, undefined);
+            assert.equal(reply.exitCode, 0, reply.stderr);
+            assert.equal(JSON.parse(reply.stdout).udid, udid);
+          } finally {
+            for (const socket of sockets.clients) socket.terminate();
+            sockets.close();
+            server.close();
+            await middleware.dispose();
+          }`,
+        ],
+        { cwd: PKG_DIR, env: { ...process.env }, encoding: "utf8", timeout: 15_000 },
+      );
+      expect(result.error).toBeUndefined();
+      expect(result.status, result.stderr).toBe(0);
+    } finally {
+      state.restore();
+    }
   });
 
   test("the public state export uses runnable JavaScript", () => {

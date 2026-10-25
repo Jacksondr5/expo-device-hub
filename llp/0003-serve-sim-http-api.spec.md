@@ -615,3 +615,11 @@ when the active display keeps changing. Private native-startup and simctl
 diagnostics stay in host logs. The `display` query uses CoreSimulator IDs;
 serve-emu's screenshot route has no equivalent query and retains its existing
 device screenshot behavior. [observed: serve-sim and serve-emu `middleware.ts`]
+
+## CLI entry selection
+
+The build selects the CLI entry used by mounted middleware: Node bundles use
+sibling `serve-sim.js`, compiled executables use `process.execPath`, and source
+execution uses `index.ts`. Middleware consumes that path without inspecting its
+host's entry script or Bun virtual paths. The Node middleware and CLI must ship
+as siblings. [observed: `build.ts`, `src/cli-path.ts`, `src/middleware.ts`]

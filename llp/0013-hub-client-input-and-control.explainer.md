@@ -182,7 +182,10 @@ serial/package. Reset holds its slot across both its initial read and its final
 mutation. A lost HTTP response does not cancel the operation, so a later recovery
 read waits for earlier work instead of unlocking controls with pre-write state.
 Different targets can run concurrently; the operation queue is bounded to the ADB
-executor's queue limit, and each ADB call retains its existing timeout. This order
+executor's queue limit. A request waiting for its turn fails after ten seconds
+and never executes. Its queue slot remains until earlier work finishes, so expired
+callers cannot bypass a running mutation or grow an unbounded chain. Once started,
+each ADB call retains its existing timeout. This order
 is local to the server process and does not survive a server restart. [observed:
 serve-emu `src/permission-requests.ts`, `src/app-management.ts`, `src/app-permissions.ts`]
 

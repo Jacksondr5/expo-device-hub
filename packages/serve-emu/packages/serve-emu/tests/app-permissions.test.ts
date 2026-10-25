@@ -5,7 +5,7 @@ import {
   resetPermissions,
 } from "../src/app-permissions.ts";
 import { grantPermission, revokePermission } from "../src/app-management.ts";
-import { DEFAULT_EXEC_MAX_QUEUED } from "../src/exec.ts";
+import { DEFAULT_EXEC_MAX_QUEUED, ExecError } from "../src/exec.ts";
 import type { ExecOpts, ExecResult, execText } from "../src/exec.ts";
 
 const DUMP = `
@@ -315,6 +315,48 @@ describe("permission request ordering", () => {
       await write;
     }
   });
+  test("expired queued writes never execute or release a running write's barrier", async () => {
+    const blocked = gate();
+    const calls: string[] = [];
+    const exec: typeof execText = async (cmd, args) => {
+      const action = args[3] === "pm" ? args[4]! : args[3]!;
+      calls.push(action);
+      if (action === "grant") await blocked.promise;
+      return recordingExec([])(cmd, args);
+    };
+    const active = grantPermission(
+      "deadline-device",
+      "com.example.app",
+      "android.permission.CAMERA",
+      { execText: exec },
+    );
+    await Bun.sleep(0);
+    const queued = revokePermission(
+      "deadline-device",
+      "com.example.app",
+      "android.permission.CAMERA",
+      { execText: exec },
+    ).catch((error: unknown) => error);
+    let recovery: ReturnType<typeof listPermissions> | undefined;
+    try {
+      const error = await Promise.race([queued, Bun.sleep(11_000).then(() => null)]);
+      expect(error).toBeInstanceOf(ExecError);
+      expect((error as ExecError).code).toBe("deadline-exceeded");
+      expect((error as ExecError).message).toContain("waiting");
+      recovery = listPermissions("deadline-device", "com.example.app", { execText: exec });
+      await Bun.sleep(0);
+      expect(calls).toEqual(["grant"]);
+    } finally {
+      blocked.release();
+      await Promise.all([active, queued, recovery]);
+    }
+    expect(calls).toEqual(["grant", "dumpsys"]);
+    expect(
+      (await listPermissions("deadline-device", "com.example.app", { execText: recordingExec([]) }))
+        .ok,
+    ).toBe(true);
+  }, 20_000);
+
   test("rejects overload without retaining slots after completion", async () => {
     const blocked = gate();
     const deps = {

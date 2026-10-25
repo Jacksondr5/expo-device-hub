@@ -168,6 +168,15 @@ Location Always has a separate selection, including Reset for undetermined state
 Native services, caching and notification initialization limits are described in
 [LLP 0003.000](0003.000-simulator-permissions.explainer.md).
 
+The shared permission hook retains pending writes per host/device/app through
+target changes and backend replacement. Read generations and per-permission
+versions reject stale responses. A failed write keeps ownership until a later
+successful readback confirms state; an error always offers Retry, including when
+rows are visible. Both platforms refresh on interval and focus while the section is open. Android
+keeps its existing HTTP backend, and recovery can use Retry without waiting for a poll. Write errors survive successful background reads until a
+new mutation or target change. [observed: `useAppPermissions.ts`,
+`useAndroidDevice.ts`; `packages/@expo/hub-components/src/dashboard/PermissionsSection.tsx`]
+
 ## Open questions
 
 None at this time.

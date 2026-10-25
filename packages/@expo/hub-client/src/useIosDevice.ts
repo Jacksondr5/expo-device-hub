@@ -1589,7 +1589,7 @@ export function useIosDeviceClient(options: DeviceConnectionOptions): DeviceClie
 
   // serve-sim exposes permissions over its CLI channel only, so the Hub has no
   // route to read them. The section stays hidden until serve-sim serves them.
-  const appPermissions = useAppPermissions({ active, appId: null, backend: null });
+  const appPermissions = useAppPermissions({ targetId: null, active, appId: null, backend: null });
 
   useEffect(() => {
     setEventLogState(createIosEventLogState());

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { execFileSync, spawnSync } from "child_process";
-import { useTempStateDir } from "./helpers";
-import { existsSync, readFileSync } from "fs";
+import { installShims, useTempStateDir } from "./helpers";
+import { existsSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 
 // The published bundles must locate sibling artifacts (dist/simax,
@@ -25,6 +25,7 @@ const ARM64_MACH_O_ARTIFACTS = [
   "dist/simcam/libSimCameraInjector.dylib",
   "dist/simcam/serve-sim-camera-helper",
   "dist/simax/serve-sim-ax-settings",
+  "dist/simperm/serve-sim-permissions",
   "dist/simpb/libSimPasteboardReader.dylib",
   "dist/simpb/serve-sim-pasteboard",
   "dist/capability-loader/libServeSimCapabilityLoader.dylib",
@@ -54,6 +55,20 @@ describeIfBuilt("bundle portability", () => {
   test.each([...BUNDLES])("%s has no build-machine path baked in", (bundle) => {
     const js = readFileSync(join(PKG_DIR, bundle), "utf-8");
     expect(js).not.toContain(SRC_DIR);
+  });
+
+  test("both published packages include the permissions helper", () => {
+    const pkg = JSON.parse(readFileSync(join(PKG_DIR, "package.json"), "utf8"));
+    const hub = JSON.parse(
+      readFileSync(join(PKG_DIR, "../../../expo-device-hub/package.json"), "utf8"),
+    );
+    expect(pkg.files).toContain("dist/simperm/serve-sim-permissions");
+    expect(hub.files).toContain("vendor/serve-sim/dist/simperm");
+    execFileSync("codesign", [
+      "--verify",
+      "--strict",
+      join(PKG_DIR, "dist/simperm/serve-sim-permissions"),
+    ]);
   });
 
   test("the shipped Node middleware dispatches through its packaged CLI", () => {
@@ -103,6 +118,69 @@ describeIfBuilt("bundle portability", () => {
       );
       expect(result.error).toBeUndefined();
       expect(result.status, result.stderr).toBe(0);
+    } finally {
+      state.restore();
+    }
+  });
+
+  test("permission read failures report the service error without bundle source or host paths", () => {
+    const shim = installShims({ xcrun: "#!/bin/sh\necho 'native API unavailable' >&2\nexit 1\n" });
+    try {
+      const result = spawnSync(
+        "node",
+        [
+          join(PKG_DIR, "dist/serve-sim.js"),
+          "permissions",
+          "list",
+          "dev.expo.test",
+          "-d",
+          "00000000-0000-0000-0000-000000000001",
+        ],
+        {
+          encoding: "utf8",
+          timeout: 30_000,
+          env: { ...process.env, PATH: `${shim.dir}:${process.env.PATH ?? ""}` },
+        },
+      );
+      expect(result.status).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(result.stderr.trim()).toBe("native API unavailable");
+    } finally {
+      shim.restore();
+    }
+  });
+
+  test.each([
+    ["camera", "Simulator permissions helper timed out"],
+    ["location", "simctl privacy grant location failed: timed out"],
+  ])("reports a %s permission timeout with empty stderr", (service, expected) => {
+    const state = useTempStateDir();
+    const preload = join(state.dir, "timeout.cjs");
+    writeFileSync(
+      preload,
+      `require('node:child_process').execFileSync = () => {
+        throw Object.assign(new Error('spawnSync xcrun ETIMEDOUT'), { code: 'ETIMEDOUT', signal: 'SIGTERM', stderr: Buffer.alloc(0) });
+      };
+      require('node:module').syncBuiltinESMExports();`,
+    );
+    try {
+      const result = spawnSync(
+        "node",
+        [
+          "--require",
+          preload,
+          join(PKG_DIR, "dist/serve-sim.js"),
+          "permissions",
+          "grant",
+          service,
+          "dev.expo.test",
+          "-d",
+          "00000000-0000-0000-0000-000000000001",
+        ],
+        { encoding: "utf8", env: { ...process.env }, timeout: 5000 },
+      );
+      expect(result.status).toBe(1);
+      expect(result.stderr.trim()).toBe(expected);
     } finally {
       state.restore();
     }

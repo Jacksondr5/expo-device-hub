@@ -5,8 +5,8 @@
 **Systems:** ServeSim, HubClient
 **Author:** Gabe Debes
 **Date:** 2026-09-23
-**Revised:** 2026-10-17 (rotation readback and app actions; clipboard; server-wide preview sharing; capture reboot status and recording admission; device-state recording manifest; settings and device actions; action catalog; active-display screenshots and observed hinge readback)
-**Related:** LLP 0001, LLP 0002
+**Revised:** 2026-10-23 (service-backed permissions, fresh notification initialization boundary and mounted CLI resolution; rotation readback and app actions; clipboard; server-wide preview sharing; capture reboot status and recording admission; device-state recording manifest; settings and device actions; action catalog; active-display screenshots and observed hinge readback)
+**Related:** LLP 0001, LLP 0002, LLP 0003.000
 
 > File paths such as `src/…` are relative to `packages/serve-sim/packages/serve-sim`, unless the text gives a path from the repository root.
 
@@ -623,3 +623,40 @@ sibling `serve-sim.js`, compiled executables use `process.execPath`, and source
 execution uses `index.ts`. Middleware consumes that path without inspecting its
 host's entry script or Bun virtual paths. The Node middleware and CLI must ship
 as siblings. [observed: `build.ts`, `src/cli-path.ts`, `src/middleware.ts`]
+
+## App permissions
+
+`permissions.set` keeps `{udid, action, service, bundleId}`, where action is
+`grant`, `revoke` (denial), or `reset` (not determined). `permissions.resetAll`
+resets each permission family. Failure may leave earlier families changed.
+Within a host control server, permission requests for the same device/app run
+in order, including reads. Losing the requesting socket does not cancel native
+work; a reconnect read waits for the outstanding request before reporting state.
+`permissions.list` retains `tcc`, `location`, and `notifications` and, for an
+app-scoped read, adds `permissions: [{id, label, state}]` for the two browser UIs.
+[observed: `src/host-actions.ts`, `src/permissions.ts`]
+
+Notification writes and reads use BulletinBoard's running service; TCC writes use
+its daemon with no-kill, with read-only SQLite status; location uses `simctl
+privacy` and persisted locationd confirmation. These mechanisms have distinct
+runtime availability and app-framework caching limits. The helper confirms its
+service result; browser consumers must list authoritative state after writes.
+[observed: `src/permissions.ts`; `Sources/SimPermissions/sim-permissions.m`]
+
+[LLP 0003.000](0003.000-simulator-permissions.explainer.md) explains the native
+services, denial/reset semantics, request ordering, browser readback, separate
+persistence boundaries, production helper versus test fixture, packaging and
+validation limits.
+
+### Fresh notification initialization boundary
+
+A service grant confirms authorization, not delivery readiness. A fresh app on iOS
+27.1 could report authorized but fail local scheduling until it made its normal
+notification request. Waiting, app relaunch and `pushSettings=63` did not fix that
+case. No service-only initialization fix or remote APNs delivery is claimed.
+The fresh pre-grant test makes the normal app request before checking delivery.
+[observed: [local permission validation](https://github.com/expo/expo-device-hub/pull/447#issuecomment-6377205261);
+`src/__tests__/permissions.e2e.test.ts`]
+
+See [LLP 0003.000's initialization boundary](0003.000-simulator-permissions.explainer.md#fresh-notification-initialization-boundary)
+for the observations, negative result and exact scope of the passing test.

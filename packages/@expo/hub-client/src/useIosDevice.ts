@@ -59,6 +59,7 @@ import {
 import { hostUiRequest, runHostAction } from "./exec-ws";
 import { fetchIosAppIcon, getIosAppDetails } from "./ios-app-details";
 import { clearIosLocation, setIosLocation } from "./ios-location";
+import { iosPermissionTargetId, iosPermissionsBackend } from "./ios-permissions";
 import { fetchScreenshot } from "./screenshot";
 import { iosMessageForKeyboardInput } from "./keyboard";
 import {
@@ -1587,9 +1588,26 @@ export function useIosDeviceClient(options: DeviceConnectionOptions): DeviceClie
     locationCapabilities,
   } = useDeviceLocation(locationBackend);
 
-  // serve-sim exposes permissions over its CLI channel only, so the Hub has no
-  // route to read them. The section stays hidden until serve-sim serves them.
-  const appPermissions = useAppPermissions({ targetId: null, active, appId: null, backend: null });
+  const permissionsBackend = useMemo(
+    () => (runAction && deviceUdid ? iosPermissionsBackend(runAction, deviceUdid) : null),
+    [runAction, deviceUdid],
+  );
+  const appPermissions = useAppPermissions({
+    targetId: iosPermissionTargetId(baseUrl, deviceUdid),
+    active,
+    appId: foregroundApp?.id ?? null,
+    backend: permissionsBackend,
+  });
+  const refreshAppPermissions = appPermissions.refreshPermissions;
+  useEffect(() => {
+    if (!active || !permissionsBackend || !foregroundApp?.id) return;
+    const stop = controlSocket?.onConnectionChange((ready) => {
+      if (ready) refreshAppPermissions();
+    });
+    return () => {
+      stop?.();
+    };
+  }, [active, permissionsBackend, foregroundApp?.id, refreshAppPermissions, controlSocket]);
 
   useEffect(() => {
     setEventLogState(createIosEventLogState());
@@ -2008,7 +2026,7 @@ export function useIosDeviceClient(options: DeviceConnectionOptions): DeviceClie
       accessibility: accessibilityAvailable,
       streamSettings: streamSettingsAvailable ? IOS_STREAM_SETTING_CAPABILITIES : false,
       location: locationCapabilities,
-      permissions: false,
+      permissions: active && permissionsBackend !== null,
       clipboard:
         clipboardPaste || clipboardCopy ? { paste: clipboardPaste, copy: clipboardCopy } : false,
     }),
@@ -2021,6 +2039,8 @@ export function useIosDeviceClient(options: DeviceConnectionOptions): DeviceClie
       locationCapabilities,
       clipboardPaste,
       clipboardCopy,
+      active,
+      permissionsBackend,
     ],
   );
 

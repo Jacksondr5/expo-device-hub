@@ -5,7 +5,7 @@
 **Systems:** HubClient, HubComponents, Hub, ServeEmu
 **Author:** Gabe Debes
 **Date:** 2026-10-06
-**Revised:** 2026-10-25 (permission readback)
+**Revised:** 2026-10-25 (permission refresh and recovery)
 **Related:** LLP 0000, LLP 0003
 
 ## Summary
@@ -157,25 +157,36 @@ Clipboard fallbacks belong to the selected device and are discarded on a selecti
 
 ## App permissions
 
-The standalone preview reads `permissions.list` when its permission section opens,
-after a write, on focus and every five seconds while open. It reads services again
-after reload instead of treating the command acknowledgement as state. It rejects
-retired reads, coalesces reads per target and keeps mutation failures visible.
-Location Always has a separate selection, including Reset for undetermined state.
-[observed: serve-sim `client/components/app-permissions-tool.tsx`;
-`__tests__/fixtures/permissions-ui.child.ts`]
+Both iOS UIs read `permissions.list` when their permission section opens, after a
+write, on focus, and every five seconds while the section is open. The Hub also reads when its shared control
+channel reconnects; the standalone preview retries through its existing control
+socket. Writes never set an optimistic granted/denied state. A page reload or
+helper replacement reads the services again. Request generations reject reads
+for an old target and reads that overlap newer writes. Pending writes stay owned by
+the device/app across target changes and control-channel reconnection until their
+readback finishes. Backend replacement invalidates cached rows and reads while
+retaining pending writes. iOS ownership includes the middleware URL as well as
+the Simulator and app, so equal UDIDs on different hosts remain independent. [observed:
+`ios-permissions.ts`, `useIosDevice.ts`, `useAppPermissions.ts`; serve-sim
+`client/components/app-permissions-tool.tsx`]
 
-Native services, caching and notification initialization limits are described in
-[LLP 0003.000](0003.000-simulator-permissions.explainer.md).
+The backend services, persistence boundaries and notification startup limitation
+are described in [LLP 0003.000](0003.000-simulator-permissions.explainer.md). The Hub exposes iOS
+permission controls only when an active client has the typed host-action channel.
+An older serve-sim without normalized permission readback reports an update error.
+[observed: `useIosDevice.ts`, `ios-permissions.ts`]
 
-The shared permission hook retains pending writes per host/device/app through
-target changes and backend replacement. Read generations and per-permission
-versions reject stale responses. A failed write keeps ownership until a later
-successful readback confirms state; an error always offers Retry, including when
-rows are visible. Both platforms refresh on interval and focus while the section is open. Android
-keeps its existing HTTP backend, and recovery can use Retry without waiting for a poll. Write errors survive successful background reads until a
-new mutation or target change. [observed: `useAppPermissions.ts`,
-`useAndroidDevice.ts`; `packages/@expo/hub-components/src/dashboard/PermissionsSection.tsx`]
+A poll keeps the pending-write IDs it saw when it began, even after those writes
+finish, so a stale snapshot cannot revert their confirmed state. Only one Hub
+permission poll runs at a time. Read errors clear after a successful read; write
+errors survive background refreshes until a new mutation or target change.
+The shared Permissions section offers Retry for errors even with existing rows
+and held writes. Both platforms refresh on interval and focus only while the
+section is open; recovery can also use Retry without waiting for a poll.
+[observed: `useAppPermissions.ts`; serve-sim `app-permissions-tool.tsx`; regression
+coverage in `__tests__/use-app-permissions.test.tsx` and serve-sim's
+`__tests__/fixtures/permissions-ui.child.ts`;
+`packages/@expo/hub-components/src/dashboard/PermissionsSection.tsx`]
 
 Android's server serializes permission grants, revokes, resets and reads per
 serial/package. Reset holds its slot across both its initial read and its final

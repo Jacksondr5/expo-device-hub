@@ -4,6 +4,7 @@ import {
   type AppManagementDependencies,
   packageName,
 } from "./app-management.ts";
+import { runPermissionRequest } from "./permission-requests.ts";
 import type { AppPermissionsResponse, RuntimePermission } from "./shared/api-contracts.ts";
 
 const BLOCK_HEADER = /^\s*runtime permissions:\s*$/;
@@ -46,6 +47,14 @@ export async function listPermissions(
   dependencies: AppManagementDependencies = {},
 ): Promise<AppPermissionsResponse> {
   const pkg = packageName(packageNameValue);
+  return runPermissionRequest(serial, pkg, () => readPermissions(serial, pkg, dependencies));
+}
+
+async function readPermissions(
+  serial: string,
+  pkg: string,
+  dependencies: AppManagementDependencies,
+): Promise<AppPermissionsResponse> {
   const { output } = await adb(
     serial,
     ["shell", "dumpsys", "package", pkg],
@@ -66,7 +75,17 @@ export async function resetPermissions(
   dependencies: AppManagementDependencies = {},
 ): Promise<AppActionResult> {
   const pkg = packageName(packageNameValue);
-  const { permissions } = await listPermissions(serial, pkg, dependencies);
+  return runPermissionRequest(serial, pkg, () =>
+    resetPackagePermissions(serial, pkg, dependencies),
+  );
+}
+
+async function resetPackagePermissions(
+  serial: string,
+  pkg: string,
+  dependencies: AppManagementDependencies,
+): Promise<AppActionResult> {
+  const { permissions } = await readPermissions(serial, pkg, dependencies);
   const commands = permissions.flatMap(({ name, granted, flags }) => {
     const grantedByDefault = flags.includes("GRANTED_BY_DEFAULT");
     const change = grantedByDefault ? "grant" : "revoke";

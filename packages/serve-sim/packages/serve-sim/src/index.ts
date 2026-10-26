@@ -41,6 +41,7 @@ import {
 } from "./state";
 import { textToKeyEvents, UnsupportedCharacterError, sendKeyEventsToWs } from "./text-to-keys";
 import { logBufferCache } from "./log-buffer";
+import { foregroundTracker } from "./foreground-tracker";
 import { crashRuntime } from "./crash/runtime";
 import { dirnameOf, sleepSync, isPortFree, servePreview } from "./runtime";
 import { isLoopbackHost } from "./middleware-utils";
@@ -2072,6 +2073,9 @@ async function serve(
   process.on("exit", () => {
     // This process owns the device tails and the crash watcher; `follow` never mounts them.
     try {
+      foregroundTracker.stopAll();
+    } catch {}
+    try {
       logBufferCache.stopAll();
     } catch {}
     try {
@@ -2131,6 +2135,7 @@ async function serve(
     if (shuttingDown) return;
     shuttingDown = true;
     sessionStopping = true;
+    foregroundTracker.stopAll();
     const recordingErrors: string[] = [];
     await runRecordingShutdown({
       finishRecordings: () =>

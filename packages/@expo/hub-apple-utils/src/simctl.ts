@@ -14,8 +14,8 @@ const DEFAULT_TIMEOUT_MS = 30_000;
  * such as boot/shutdown can supply an `ignoreError` predicate for benign
  * already-transitioned-device failures.
  *
- * The child is killed after `timeoutMs` (default 30 s). Without it, every call
- * hangs while CoreSimulatorService is unresponsive. A timeout is reported as
+ * The child is sent SIGTERM after `timeoutMs` (default 30 s). Without it, every
+ * call hangs while CoreSimulatorService is unresponsive. A timeout is reported as
  * its own error, and `ignoreError` never hides it.
  */
 interface ExecSimctlOptions {
@@ -62,12 +62,17 @@ export async function runSimctl(args: string[]): Promise<AppleUtilsResult<string
   return result(executed.value?.stdout ?? null, executed.error);
 }
 
-/** Whether `execFile` killed the child because its `timeout` elapsed. */
+/**
+ * Whether `execFile` killed the child because its `timeout` elapsed.
+ *
+ * Node sets `killed` only when it sent the signal itself, and here only the
+ * timeout does. `signal` is not checked: a child that catches SIGTERM and exits
+ * with a code reports `signal: null`.
+ */
 function isTimeout(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
 
-  const { killed, signal } = error as { killed?: unknown; signal?: unknown };
-  return killed === true && signal === "SIGTERM";
+  return (error as { killed?: unknown }).killed === true;
 }
 
 /** Collect the human-readable text from an exec error (its message and stderr). */

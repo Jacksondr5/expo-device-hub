@@ -10,7 +10,8 @@ describe("execSimctl", () => {
 
   beforeAll(() => {
     // A fake `xcrun` on PATH: `simctl stall` never returns, like a call to an
-    // unresponsive CoreSimulatorService; `simctl fail` exits non-zero.
+    // unresponsive CoreSimulatorService; `simctl stall-exit1` also never
+    // returns, but exits 1 on SIGTERM; `simctl fail` exits non-zero.
     directory = mkdtempSync(join(tmpdir(), "hub-simctl-"));
     const xcrun = join(directory, "xcrun");
     writeFileSync(
@@ -19,6 +20,7 @@ describe("execSimctl", () => {
         "#!/bin/sh",
         'case "$2" in',
         `  stall) echo $$ > "${join(directory, "stalled.pid")}"; exec sleep 60 ;;`,
+        `  stall-exit1) trap 'kill $!; exit 1' TERM; echo $$ > "${join(directory, "stalled.pid")}"; sleep 60 & wait ;;`,
         '  fail) echo "Unable to boot device in current state: Booted" >&2; exit 1 ;;',
         '  *) echo "ok" ;;',
         "esac",
@@ -35,25 +37,33 @@ describe("execSimctl", () => {
     rmSync(directory, { recursive: true, force: true });
   });
 
-  test("ends a simctl call that never returns with a timeout error", async () => {
-    const started = Date.now();
-    const executed = await execSimctl(["stall"], { timeoutMs: 150 });
+  // 1 s leaves the fake time to write its PID file before the timeout.
+  test.each(["stall", "stall-exit1"])(
+    "ends a `simctl %s` call that never returns with a timeout error",
+    async (command) => {
+      rmSync(join(directory, "stalled.pid"), { force: true });
+      const started = Date.now();
+      const executed = await execSimctl([command], { timeoutMs: 1000 });
 
-    expect(executed.value).toBeNull();
-    expect(executed.error?.message).toBe(
-      "[apple-utils] `xcrun simctl stall` did not respond within 0.15 s; CoreSimulatorService may need restarting",
-    );
-    expect(Date.now() - started).toBeLessThan(5000);
+      expect(executed.value).toBeNull();
+      expect(executed.error?.message).toBe(
+        `[apple-utils] \`xcrun simctl ${command}\` did not respond within 1 s; CoreSimulatorService may need restarting`,
+      );
+      expect(Date.now() - started).toBeLessThan(4000);
 
-    const pid = Number(readFileSync(join(directory, "stalled.pid"), "utf8"));
-    expect(() => process.kill(pid, 0)).toThrow();
-  });
+      const pid = Number(readFileSync(join(directory, "stalled.pid"), "utf8"));
+      expect(() => process.kill(pid, 0)).toThrow();
+    },
+  );
 
-  test("does not let ignoreError hide a timeout", async () => {
-    const executed = await execSimctl(["stall"], { timeoutMs: 150, ignoreError: () => true });
+  test.each(["stall", "stall-exit1"])(
+    "does not let ignoreError hide a `simctl %s` timeout",
+    async (command) => {
+      const executed = await execSimctl([command], { timeoutMs: 1000, ignoreError: () => true });
 
-    expect(executed.error?.message).toContain("did not respond within 0.15 s");
-  });
+      expect(executed.error?.message).toContain("did not respond within 1 s");
+    },
+  );
 
   test("reports an ordinary failure with the failure message", async () => {
     const executed = await execSimctl(["fail"], { timeoutMs: 5000 });

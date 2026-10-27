@@ -1,5 +1,11 @@
 # expo-device-hub
 
+## 0.19.0
+
+### Minor Changes
+
+- 96d74b8: Add single-device mode to lock the Hub to one device and hide the sidebar.
+
 ## 0.18.1
 
 ### Patch Changes

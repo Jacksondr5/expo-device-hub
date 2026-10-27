@@ -1,5 +1,15 @@
 # @expo/serve-sim
 
+## 0.12.0
+
+### Minor Changes
+
+- 12e23ba: Add single-device mode to lock a session to one Simulator and hide the sidebar.
+
+### Patch Changes
+
+- ec8156b: Center the Simulator beside open panels and restore its preferred size when they close.
+
 ## 0.11.0
 
 ### Minor Changes

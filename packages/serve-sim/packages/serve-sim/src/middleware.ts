@@ -1,3 +1,4 @@
+import { SingleDevicePolicy } from "./single-device";
 import { getScreenshotDisplayIdsAsync } from "./screenshot-display";
 import {
   captureScreenshotFileAsync,
@@ -196,8 +197,7 @@ type SimctlAllList = {
   devices: Record<string, Array<Omit<SimctlDevice, "runtime">>>;
 };
 
-type ShutdownRequestBody = { udid?: string };
-type StartRequestBody = { udid?: string };
+type DeviceLifecycleRequestBody = { udid?: unknown };
 type ReleaseRequestBody = { targetId?: string };
 type HighlightRequestBody = { targetId?: string; on?: boolean };
 /** Re-exported alias for the canonical device-state record in `./state`. */
@@ -292,7 +292,7 @@ function classifyStaleState(
   booted: Set<string> | null,
   selfPid: number,
 ): StaleStateAction {
-  if (booted && isSimulatorUdid(state.device) && !booted.has(state.device)) {
+  if (booted && isSimulatorUdid(state.device) && !booted.has(state.device.toUpperCase())) {
     return state.pid === selfPid ? "recycle-self" : "recycle-helper";
   }
   return "keep";
@@ -450,7 +450,7 @@ function getPreferredDeviceUdid(): string | null {
   return udid;
 }
 
-export async function readServeSimStates(): Promise<ServeSimState[]> {
+export async function readServeSimStates(device?: string): Promise<ServeSimState[]> {
   let files: string[];
   try {
     files = readdirSync(stateDir()).filter((f) => f.startsWith("server-") && f.endsWith(".json"));
@@ -459,12 +459,13 @@ export async function readServeSimStates(): Promise<ServeSimState[]> {
   }
   const booted = await getBootedUdids();
   const bootedAt = bootedSnapshot.at;
-  void retryPendingCaptureCleanup();
+  void retryPendingCaptureCleanup({}, device);
   const states: ServeSimState[] = [];
   for (const f of files) {
     const path = join(stateDir(), f);
     try {
       const state: ServeSimState = JSON.parse(readFileSync(path, "utf-8"));
+      if (device && state.device.toUpperCase() !== device.toUpperCase()) continue;
       try {
         process.kill(state.pid, 0);
       } catch {
@@ -521,7 +522,7 @@ export function selectServeSimState(
   device?: string | null,
 ): ServeSimState | null {
   if (device) {
-    return states.find((state) => state.device === device) ?? null;
+    return states.find((state) => state.device.toUpperCase() === device.toUpperCase()) ?? null;
   }
   return states[0] ?? null;
 }
@@ -994,10 +995,14 @@ export async function disableNetworkCaptureForStoppedDevice(
 }
 
 /** Retry failed cleanups until the session that failed is gone; a newer session is left alone. */
-export async function retryPendingCaptureCleanup(deps: CaptureCleanupDeps = {}): Promise<void> {
+export async function retryPendingCaptureCleanup(
+  deps: CaptureCleanupDeps = {},
+  device?: string,
+): Promise<void> {
   const sessionOf = deps.session ?? ((id: string) => captureRuntime.storeFor(id));
   await Promise.all(
     [...pendingCaptureCleanup].map(async ([udid, session]) => {
+      if (device && udid.toUpperCase() !== device.toUpperCase()) return;
       if (sessionOf(udid) !== session) {
         pendingCaptureCleanup.delete(udid);
         return;
@@ -1058,6 +1063,7 @@ export function previewConfigForState(
   requirePreviewToken = false,
   shareUrl?: string,
   disableShare = false,
+  singleDevice?: string,
 ): ServeSimState & {
   basePath: string;
   logsEndpoint: string;
@@ -1090,6 +1096,7 @@ export function previewConfigForState(
   requireToken?: boolean;
   shareUrl?: string;
   disableShare?: boolean;
+  singleDevice?: string;
 } {
   const gridApiBase = (base === "" ? "" : base) + "/grid/api";
   const legacyCodec = typeof streamSettingsOrCodec === "string" ? streamSettingsOrCodec : undefined;
@@ -1102,6 +1109,7 @@ export function previewConfigForState(
   const { token: _sessionToken, streamSettings: _foreignStreamSettings, ...publicState } = state;
   return {
     ...publicState,
+    ...(singleDevice ? { singleDevice } : {}),
     basePath: base,
     logsEndpoint: endpoint(base, "/logs", state.device),
     crashesEndpoint: endpoint(base, "/crashes", state.device),
@@ -1360,7 +1368,7 @@ function sortGridSimulators(
     return 5;
   };
   const stateRank = (device: SimctlDevice): number => {
-    if (helperByUdid.has(device.udid)) return 0;
+    if (helperByUdid.has(device.udid.toUpperCase())) return 0;
     if (selectedDevice && device.udid === selectedDevice) return 1;
     if (device.state === "Booted") return 2;
     if (device.udid === preferredUdid) return 3;
@@ -1410,12 +1418,18 @@ function listAllSimulators(): Promise<SimctlDevice[]> {
   });
 }
 
-async function readGridSnapshot(selectedDevice: string | null): Promise<{
+async function readGridSnapshot(
+  selectedDevice: string | null,
+  deviceScope?: string,
+): Promise<{
   simulators: SimctlDevice[];
   helperByUdid: Map<string, ServeSimState>;
 }> {
-  const [states, simulators] = await Promise.all([readServeSimStates(), listAllSimulators()]);
-  const helperByUdid = new Map(states.map((state) => [state.device, state] as const));
+  const [states, simulators] = await Promise.all([
+    readServeSimStates(deviceScope),
+    listAllSimulators(),
+  ]);
+  const helperByUdid = new Map(states.map((state) => [state.device.toUpperCase(), state] as const));
   return {
     simulators: sortGridSimulators(simulators, helperByUdid, selectedDevice),
     helperByUdid,
@@ -1430,7 +1444,7 @@ function gridStatusesForRequest(
   proxyHelpers: boolean,
 ): GridDeviceStatus[] {
   return simulators.map((simulator) => {
-    const helper = helperByUdid.get(simulator.udid);
+    const helper = helperByUdid.get(simulator.udid.toUpperCase());
     const remoteHelper = helper
       ? rewriteStateForRequestHost(
           helper,
@@ -1567,10 +1581,14 @@ function buildMemoryReport(): MemoryReport {
 export interface SimMiddlewareOptions {
   /** Standalone process handoff; omitted by embedded servers. */
   configureResources?: (configuration: SessionConfiguration) => Promise<void>;
+  /** Keep an orphan restricted to its startup device until its private ownership claim. */
+  prepareForAdoption?: boolean;
   /** Base path to serve the preview at. Default: "/.sim" */
   basePath?: string;
   /** Pin this preview server to a specific simulator UDID. */
   device?: string;
+  /** Restrict every route and control action to this simulator UDID. */
+  singleDevice?: string;
   /**
    * Per-session bearer token gating `/exec` and network-capture HTTP routes.
    * Auto-generated if omitted. The token is injected into the preview HTML
@@ -1729,12 +1747,17 @@ export function handleLogsRequest(
   );
 }
 
-async function selectDeviceAndReap(selectedDevice: string | null): Promise<ServeSimState | null> {
-  const states = await readServeSimStates();
+async function selectDeviceAndReap(
+  selectedDevice: string | null,
+  deviceScope?: string,
+): Promise<ServeSimState | null> {
+  const states = await readServeSimStates(deviceScope);
   const state = selectServeSimState(states, selectedDevice);
   const live = states.map((s) => s.device);
-  crashRuntime.prune(live);
-  logBufferCache.prune(live);
+  if (!deviceScope) {
+    crashRuntime.prune(live);
+    logBufferCache.prune(live);
+  }
   return state;
 }
 
@@ -1993,6 +2016,38 @@ export async function handleCaptureEntriesRequest(
 }
 
 export function simMiddleware(options?: SimMiddlewareOptions): SimMiddleware {
+  const initialPolicy =
+    options?.singleDevice === undefined ? null : new SingleDevicePolicy(options.singleDevice);
+  let policy = initialPolicy;
+  if (options?.prepareForAdoption) {
+    if (!options.device) throw new Error("Prepared adoption requires one device");
+    policy ??= new SingleDevicePolicy(options.device);
+  }
+  if (policy && options?.device) policy.resolveTarget(options.device);
+  const readSessionGridSnapshot = async (selectedDevice: string | null) => {
+    const sessionDevice = policy?.device;
+    const snapshot = await readGridSnapshot(selectedDevice, sessionDevice);
+    if (sessionDevice)
+      snapshot.simulators = snapshot.simulators.filter(
+        (d) => d.udid.toUpperCase() === sessionDevice,
+      );
+    return snapshot;
+  };
+  const requestDeviceAllowed = (rawUrl: string): boolean => {
+    if (!policy) return true;
+    try {
+      const parsed = new URL(rawUrl, "http://localhost");
+      for (const device of parsed.searchParams.getAll("device")) policy.resolveTarget(device);
+      const helper = helperProxyTarget(rawUrl, helperPrefix);
+      if (helper?.device != null) policy.resolveTarget(helper.device);
+      // inspect-webkit cannot reconcile its targets with a simulator UDID.
+      return (
+        parsed.pathname !== devtoolsPrefix && !parsed.pathname.startsWith(`${devtoolsPrefix}/`)
+      );
+    } catch {
+      return false;
+    }
+  };
   const reportReadiness = createReadinessReporter();
   validatedAdditionalDylibs();
   const streamSettings =
@@ -2000,7 +2055,7 @@ export function simMiddleware(options?: SimMiddlewareOptions): SimMiddleware {
   const base = (options?.basePath ?? "/.sim").replace(/\/+$/, "");
   const helperPrefix = helperProxyPrefix(base);
   const devtoolsPrefix = devtoolsProxyPrefix(base);
-  const proxyHelpers = options?.proxyHelpers ?? false;
+  const proxyHelpers = policy ? true : (options?.proxyHelpers ?? false);
   const getInspectWebKitBridge = options?.inspectWebKitBridge ?? ensureInspectWebKitBridge;
   // Per-process random token. Anyone who can read the preview HTML same-origin
   // can call /exec and network-capture; cross-origin pages and LAN clients cannot,
@@ -2074,8 +2129,32 @@ export function simMiddleware(options?: SimMiddlewareOptions): SimMiddleware {
     }
   };
 
+  const resolveLifecycleDevice = (body: string, res: SimRes): string | null => {
+    const refuse = (status: number, error: string): null => {
+      res.writeHead(status, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: false, error }));
+      return null;
+    };
+    let udid: unknown;
+    try {
+      udid = (JSON.parse(body) as DeviceLifecycleRequestBody | null)?.udid;
+    } catch {}
+    if (
+      typeof udid !== "string" ||
+      !/^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/i.test(udid)
+    ) {
+      return refuse(400, "Invalid or missing udid");
+    }
+    try {
+      return policy?.resolveTarget(udid) ?? udid;
+    } catch {
+      return refuse(403, "Device is outside this single-device session.");
+    }
+  };
+
   const handleUiRequest: UiRequestHandler = async (payload) => {
-    const p = (payload ?? {}) as { device?: string; option?: string; value?: string };
+    const p = { ...(payload as object) } as { device?: string; option?: string; value?: string };
+    if (policy) p.device = policy.resolveTarget(p.device);
     // Must start alphanumeric and stay bounded: a leading "-" is parsed as a flag by simctl.
     if (typeof p.device !== "string" || !/^[0-9A-Za-z][0-9A-Za-z-]{0,255}$/.test(p.device)) {
       throw new Error("missing or invalid device udid");
@@ -2140,7 +2219,16 @@ export function simMiddleware(options?: SimMiddlewareOptions): SimMiddleware {
       res.end();
       return;
     }
-    const requestedDevice = queryDevice(rawUrl);
+    if (ownPath && !requestDeviceAllowed(rawUrl)) {
+      res.writeHead(403, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      res.end(
+        JSON.stringify({
+          error: "This single-device session cannot access another device or WebKit targets.",
+        }),
+      );
+      return;
+    }
+    const requestedDevice = policy?.device ?? queryDevice(rawUrl);
     const selectedDevice = requestedDevice ?? options?.device ?? null;
     const devtoolsFrontendBase = base === "/" ? "/devtools-frontend" : `${base}/devtools-frontend`;
 
@@ -2230,7 +2318,7 @@ export function simMiddleware(options?: SimMiddlewareOptions): SimMiddleware {
 
     // Serve the preview page
     if (url === base || url === base + "/") {
-      const states = await readServeSimStates();
+      const states = await readServeSimStates(policy?.device);
       const state = selectServeSimState(states, selectedDevice);
       if (state) void initializeClipboard(state.device);
       let html = loadHtml();
@@ -2242,6 +2330,7 @@ export function simMiddleware(options?: SimMiddlewareOptions): SimMiddleware {
         const minimal = JSON.stringify({
           basePath: base,
           execToken,
+          ...(policy ? { singleDevice: policy.device } : {}),
           ...(shareUrl ? { shareUrl } : {}),
           ...(disableShare ? { disableShare: true } : {}),
         });
@@ -2269,6 +2358,7 @@ export function simMiddleware(options?: SimMiddlewareOptions): SimMiddleware {
             requirePreviewToken,
             shareUrl,
             disableShare,
+            policy?.device,
           ),
         );
         const configScript = `<script>window.__SIM_PREVIEW__=${config}</script>`;
@@ -2312,7 +2402,7 @@ export function simMiddleware(options?: SimMiddlewareOptions): SimMiddleware {
     // Static simulator metadata. The browser keeps this catalog in memory and
     // receives state/helper changes through the compact status feed below.
     if (url === base + "/grid/api/catalog") {
-      const { simulators } = await readGridSnapshot(selectedDevice);
+      const { simulators } = await readSessionGridSnapshot(selectedDevice);
       const total = simulators.length;
       const { limit, offset } = parseGridPaging(rawUrl);
       const page = limit == null ? simulators : simulators.slice(offset, offset + limit);
@@ -2341,7 +2431,7 @@ export function simMiddleware(options?: SimMiddlewareOptions): SimMiddleware {
     }
 
     const computeGridStatuses = async (): Promise<string> => {
-      const { simulators, helperByUdid } = await readGridSnapshot(selectedDevice);
+      const { simulators, helperByUdid } = await readSessionGridSnapshot(selectedDevice);
       return JSON.stringify({
         statuses: gridStatusesForRequest(simulators, helperByUdid, req, base, proxyHelpers),
       });
@@ -2439,7 +2529,7 @@ export function simMiddleware(options?: SimMiddlewareOptions): SimMiddleware {
 
     // Grid JSON: every supported simulator, annotated with running helper info if any.
     if (url === base + "/grid/api") {
-      const { simulators, helperByUdid } = await readGridSnapshot(selectedDevice);
+      const { simulators, helperByUdid } = await readSessionGridSnapshot(selectedDevice);
       const total = simulators.length;
       const { limit, offset } = parseGridPaging(rawUrl);
       const page = limit == null ? simulators : simulators.slice(offset, offset + limit);
@@ -2475,15 +2565,8 @@ export function simMiddleware(options?: SimMiddlewareOptions): SimMiddleware {
         body += typeof chunk === "string" ? chunk : chunk.toString();
       });
       req.on("end", async () => {
-        let udid = "";
-        try {
-          udid = (JSON.parse(body) as ShutdownRequestBody).udid ?? "";
-        } catch {}
-        if (!/^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/i.test(udid)) {
-          res.writeHead(400, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ ok: false, error: "Invalid or missing udid" }));
-          return;
-        }
+        const udid = resolveLifecycleDevice(body, res);
+        if (udid === null) return;
         // Stop our own in-process capture for this device first (no-op if it
         // isn't streamed here). This frees the native session immediately
         // rather than waiting for the next poll's reaper to notice.
@@ -2523,15 +2606,8 @@ export function simMiddleware(options?: SimMiddlewareOptions): SimMiddleware {
         body += typeof chunk === "string" ? chunk : chunk.toString();
       });
       req.on("end", () => {
-        let udid = "";
-        try {
-          udid = (JSON.parse(body) as StartRequestBody).udid ?? "";
-        } catch {}
-        if (!/^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/i.test(udid)) {
-          res.writeHead(400, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ ok: false, error: "Invalid or missing udid" }));
-          return;
-        }
+        const udid = resolveLifecycleDevice(body, res);
+        if (udid === null) return;
         const port = req.socket.localPort ?? 0;
         void startDeviceInProcess(
           udid,
@@ -2573,7 +2649,7 @@ export function simMiddleware(options?: SimMiddlewareOptions): SimMiddleware {
     // /devtools/page/:id on localhost; the preview adds iframe-safe frontend
     // URLs so the browser UI can embed Chrome DevTools.
     if (url === base + "/devtools") {
-      const states = await readServeSimStates();
+      const states = await readServeSimStates(policy?.device);
       const state = selectServeSimState(states, selectedDevice);
       if (!state) {
         res.writeHead(404, { "Content-Type": "application/json" });
@@ -2695,7 +2771,7 @@ export function simMiddleware(options?: SimMiddlewareOptions): SimMiddleware {
     }
 
     if (url === base + "/readyz") {
-      const states = await readServeSimStates();
+      const states = await readServeSimStates(policy?.device);
       const state = selectServeSimState(states, selectedDevice);
       if (!state) {
         reportReadiness("unavailable", "session-unavailable", selectedDevice ?? undefined);
@@ -2733,7 +2809,7 @@ export function simMiddleware(options?: SimMiddlewareOptions): SimMiddleware {
 
     // JSON API: serve-sim state
     if (url === base + "/api") {
-      const states = await readServeSimStates();
+      const states = await readServeSimStates(policy?.device);
       const state = selectServeSimState(states, selectedDevice);
       if (state) void initializeClipboard(state.device);
       // The web UI polls /api every ~2s, so logging every hit floods the
@@ -2776,6 +2852,7 @@ export function simMiddleware(options?: SimMiddlewareOptions): SimMiddleware {
                 requirePreviewToken,
                 shareUrl,
                 disableShare,
+                policy?.device,
               )
             : null,
         ),
@@ -2896,7 +2973,9 @@ export function simMiddleware(options?: SimMiddlewareOptions): SimMiddleware {
         req,
         res,
         rawUrl,
-        async () => selectServeSimState(await readServeSimStates(), selectedDevice)?.device ?? null,
+        async () =>
+          selectServeSimState(await readServeSimStates(policy?.device), selectedDevice)?.device ??
+          null,
       );
       return;
     }
@@ -3069,7 +3148,7 @@ export function simMiddleware(options?: SimMiddlewareOptions): SimMiddleware {
     // on change instead of re-sending identical JSON on a fixed interval.
     if (url === base + "/api/events") {
       const computeConfig = async (): Promise<string> => {
-        const states = await readServeSimStates();
+        const states = await readServeSimStates(policy?.device);
         const state = selectServeSimState(states, selectedDevice);
         if (state) void initializeClipboard(state.device);
         const remoteState = state
@@ -3092,6 +3171,7 @@ export function simMiddleware(options?: SimMiddlewareOptions): SimMiddleware {
                 requirePreviewToken,
                 shareUrl,
                 disableShare,
+                policy?.device,
               )
             : null,
         );
@@ -3174,7 +3254,7 @@ export function simMiddleware(options?: SimMiddlewareOptions): SimMiddleware {
     }
 
     if (url === base + "/crashes" || url === base + "/crashes/") {
-      const state = await selectDeviceAndReap(selectedDevice);
+      const state = await selectDeviceAndReap(selectedDevice, policy?.device);
       await handleCrashesRequestAfter(
         () => crashRuntime.start({ deferToRetry: true }).catch(() => {}),
         req,
@@ -3201,7 +3281,7 @@ export function simMiddleware(options?: SimMiddlewareOptions): SimMiddleware {
         );
         return;
       }
-      const state = await selectDeviceAndReap(selectedDevice);
+      const state = await selectDeviceAndReap(selectedDevice, policy?.device);
       const params = new URL(rawUrl, "http://127.0.0.1").searchParams;
       await handleCrashReportRequest(
         req,
@@ -3217,13 +3297,18 @@ export function simMiddleware(options?: SimMiddlewareOptions): SimMiddleware {
     }
 
     if (url === base + "/logs") {
-      handleLogsRequest(req, res, await selectDeviceAndReap(selectedDevice), rawUrl);
+      handleLogsRequest(
+        req,
+        res,
+        await selectDeviceAndReap(selectedDevice, policy?.device),
+        rawUrl,
+      );
       return;
     }
 
     // SSE: normalized accessibility snapshot stream
     if (url === base + "/ax") {
-      const states = await readServeSimStates();
+      const states = await readServeSimStates(policy?.device);
       // The client may have left during that await; its close event has already fired.
       if (req.destroyed) return;
       const state = selectServeSimState(states, selectedDevice);
@@ -3239,7 +3324,7 @@ export function simMiddleware(options?: SimMiddlewareOptions): SimMiddleware {
         "X-Accel-Buffering": "no",
       });
       res.write(":\n\n");
-      axStreamerCache.prune(states.map((s) => s.device));
+      if (!policy) axStreamerCache.prune(states.map((s) => s.device));
       const ax = axStreamerCache.get(state.device);
       const removeClient = ax.addClient(res);
       req.on("close", removeClient);
@@ -3249,7 +3334,7 @@ export function simMiddleware(options?: SimMiddlewareOptions): SimMiddleware {
     // SSE of the user app's live CPU/memory: an `event: meta` frame (schema,
     // udid, hostCores, cadence), then one `data:` line per sample.
     if (url === base + "/metrics") {
-      const states = await readServeSimStates();
+      const states = await readServeSimStates(policy?.device);
       // The client may have left during that await; its close event has already fired.
       if (req.destroyed) return;
       const state = selectServeSimState(states, selectedDevice);
@@ -3258,7 +3343,7 @@ export function simMiddleware(options?: SimMiddlewareOptions): SimMiddleware {
     }
 
     if (url === base + "/network-capture") {
-      const states = await readServeSimStates();
+      const states = await readServeSimStates(policy?.device);
       // The client may have left during that await; its close event has already fired.
       if (req.destroyed) return;
       const state = selectServeSimState(states, selectedDevice);
@@ -3268,14 +3353,14 @@ export function simMiddleware(options?: SimMiddlewareOptions): SimMiddleware {
 
     // Not under "/network-capture/", so these can never be read as a request id.
     if (url === base + "/network-capture.ndjson") {
-      const states = await readServeSimStates();
+      const states = await readServeSimStates(policy?.device);
       const state = selectServeSimState(states, selectedDevice);
       await handleCaptureEntriesRequest(req, res, state, captureRuntime);
       return;
     }
 
     if (url === base + "/network-capture.har") {
-      const states = await readServeSimStates();
+      const states = await readServeSimStates(policy?.device);
       const state = selectServeSimState(states, selectedDevice);
       await handleCaptureHarRequest(req, res, state, captureRuntime);
       return;
@@ -3297,7 +3382,7 @@ export function simMiddleware(options?: SimMiddlewareOptions): SimMiddleware {
         );
         return;
       }
-      const states = await readServeSimStates();
+      const states = await readServeSimStates(policy?.device);
       const state = selectServeSimState(states, selectedDevice);
       handleCaptureBodyRequest(req, res, state, id, captureRuntime);
       return;
@@ -3308,7 +3393,7 @@ export function simMiddleware(options?: SimMiddlewareOptions): SimMiddleware {
     // log line. Filtering is done here (not in the browser) so the SSE stream
     // stays narrow and the client can listen without rate-limit concerns.
     if (url === base + "/appstate") {
-      const states = await readServeSimStates();
+      const states = await readServeSimStates(policy?.device);
       // The client may have left during that await; its close event has already fired.
       if (req.destroyed) return;
       const state = selectServeSimState(states, selectedDevice);
@@ -3372,7 +3457,11 @@ export function simMiddleware(options?: SimMiddlewareOptions): SimMiddleware {
       return;
     }
     const rawUrl = req.url ?? "";
-    const selectedDevice = queryDevice(rawUrl) ?? options?.device ?? null;
+    if (!requestDeviceAllowed(rawUrl)) {
+      socket.destroy();
+      return;
+    }
+    const selectedDevice = policy?.device ?? queryDevice(rawUrl) ?? options?.device ?? null;
     const helperTarget = helperProxyTarget(rawUrl, helperPrefix);
     const devtoolsTarget = devtoolsProxyTarget(rawUrl, devtoolsPrefix);
     if (devtoolsTarget) {
@@ -3422,6 +3511,9 @@ export function simMiddleware(options?: SimMiddlewareOptions): SimMiddleware {
     ssePrefixes: sseStreamPaths(base),
     onUiRequest: handleUiRequest,
     serveSimBinPath: serveSimBinPath(),
+    get singleDevicePolicy() {
+      return policy ?? undefined;
+    },
     deviceName: bootedDeviceName,
     onActionResult: (action, params, result) => recordActionEvent(action, params, result),
     onSseRequest(path, websocketRequest) {
@@ -3461,11 +3553,15 @@ export function simMiddleware(options?: SimMiddlewareOptions): SimMiddleware {
       websocket.close();
       return true;
     }
+    if (!requestDeviceAllowed(request.url)) {
+      websocket.close();
+      return true;
+    }
     if (execWebSocketHandler(request, websocket)) return true;
     if (
       claimHelperHidSocket(request, websocket, {
         helperProxyTarget: (rawUrl) => helperProxyTarget(rawUrl, helperPrefix),
-        fallbackDevice: options?.device ?? null,
+        fallbackDevice: policy?.device ?? options?.device ?? null,
         resolveSession: (device) => getDeviceSession(device, streamSettings),
       })
     )
@@ -3483,6 +3579,18 @@ export function simMiddleware(options?: SimMiddlewareOptions): SimMiddleware {
     if (sessionConfigured || !options?.configureResources || streamSettings?.transport !== "webrtc")
       throw new Error("Session cannot be configured");
     sessionConfigured = true;
+    const adoptedPolicy =
+      configuration.singleDevice === undefined
+        ? initialPolicy
+        : new SingleDevicePolicy(configuration.singleDevice);
+    if (adoptedPolicy) {
+      if (!options.device) throw new Error("Single-device adoption requires one startup device");
+      adoptedPolicy.resolveTarget(options.device);
+      initialPolicy?.resolveTarget(adoptedPolicy.device);
+    }
+    // Preparation admitted only the startup device. Apply the owner's final
+    // restriction before awaiting resources; existing exec sockets read it per message.
+    policy = adoptedPolicy;
     await options.configureResources(configuration);
     if (options.device)
       await peekDeviceSession(options.device)?.updateStreamSettings(configuration.stream);

@@ -4,6 +4,7 @@ import {
   RECORDING_RECONCILIATION_WAIT_MS,
 } from "./recording-timeouts";
 import { timeStartup } from "./startup-timing";
+import { SingleDevicePolicy } from "./single-device";
 import { captureRuntime } from "./capture/runtime";
 import { rebootedWithCaptureSince } from "./capture/reboot";
 import { Command, InvalidArgumentError } from "commander";
@@ -1984,6 +1985,7 @@ async function serve(
     requireToken?: boolean;
     orphan?: boolean;
     quiet?: boolean;
+    singleDevice?: string;
     networkCapture?: boolean;
     networkCaptureProxy?: string;
     clipboard?: boolean | "unmanaged";
@@ -2055,6 +2057,8 @@ async function serve(
           }
         },
         device: targetDevice,
+        prepareForAdoption: options.orphan,
+        singleDevice: options.singleDevice,
         streamSettings: options.stream,
         proxyHelpers: true,
         corsOrigins: options.corsOrigins ?? [],
@@ -2352,6 +2356,10 @@ program
       "it whenever the server is reachable from the network: the same token gates the route that runs " +
       "shell commands.",
   )
+  .option(
+    "--single-device <udid>",
+    "Lock the preview and controls to one simulator; hide the device sidebar",
+  )
   .option("--detach", "Spawn helper and exit (daemon mode)")
   .option("--orphan", "Start a server that a local --adopt command can claim once")
   .option("--adopt", "Apply these options to an existing compatible orphan server; never start one")
@@ -2534,6 +2542,29 @@ Examples:
                                          Launch an installed app, then start the stream`,
   )
   .action(async (devices: string[], opts) => {
+    if (opts.singleDevice !== undefined) {
+      try {
+        const policy = new SingleDevicePolicy(opts.singleDevice);
+        if (devices.length > 1) throw new Error("--single-device accepts only one startup target.");
+        for (const device of devices) policy.resolveTarget(device);
+        if (
+          opts.detach ||
+          opts.orphan ||
+          opts.preview === false ||
+          opts.list !== undefined ||
+          opts.kill !== undefined
+        ) {
+          throw new Error(
+            "--single-device requires the preview server; drop --detach/--orphan/--no-preview/--list/--kill.",
+          );
+        }
+        opts.singleDevice = policy.device;
+        devices = [policy.device];
+      } catch (error) {
+        console.error(error instanceof Error ? error.message : String(error));
+        process.exit(1);
+      }
+    }
     if (
       opts.orphan &&
       (opts.adopt ||
@@ -2822,6 +2853,7 @@ Examples:
         if (!!opts.recordingOutput !== !!opts.recordingId)
           throw new Error("Pass both --recording-output and --recording-id");
         const configuration = sessionConfigurationSchema.parse({
+          singleDevice: opts.singleDevice,
           stream: { ...stream, ...normalizeStreamEncoderSettings(stream) },
           corsOrigins: opts.corsOrigin,
           frameAncestors: opts.frameAncestor,
@@ -3015,6 +3047,7 @@ Examples:
         disableShare: !!opts.disableShare,
         allowAnyHostWhenInsecure: !!opts.allowAnyHostWhenInsecure,
         debugStreamPath,
+        singleDevice: opts.singleDevice,
         requireToken: !!opts.requireToken,
         orphan: !!opts.orphan,
         quiet: !!opts.quiet,

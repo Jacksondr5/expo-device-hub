@@ -111,6 +111,38 @@ access. The app and the grant stay after Copy, and the app shows on the Home
 screen. `--disable clipboard`, or `clipboard: false` for `simMiddleware`, does
 not prevent this.
 
+## Single-device sessions
+
+`--single-device <udid>` and `simMiddleware({ singleDevice: udid })` bind a preview
+session to one concrete simulator UUID. The CLI rejects multiple or conflicting
+targets and helper-only run modes before resolving or booting a device. The
+policy survives a shutdown or reconnect; it never chooses a replacement
+[observed: `src/index.ts`, `src/single-device.ts`].
+
+Discovery, catalog and status feeds include only that simulator. Scoped discovery
+does not reap another device's state or prune its runtime caches. HTTP query
+parameters, helper path segments, lifecycle request bodies, control actions,
+simulator settings and SSE subscriptions reject a different target. Omitted
+control targets use the pinned UUID. `server.detach`, `server.kill` and
+`home.watch` are unavailable because they act outside this session. The device
+sidebar and every entry point that opens it are omitted. This restriction adds
+to the existing authentication and origin gates; it never grants access
+[observed: `src/middleware.ts`, `src/socket/server-control.ts`, `src/client/client.tsx`].
+
+Path-only `file.readBase64` and `app.infoPlist` actions retain their existing
+host-scoped allowed roots, including files belonging to another Simulator. The
+device policy does not sandbox filesystem reads [confirmed: Gabe Debes,
+2026-10-26, accepted host-scoped reads; observed: `src/host-actions.ts`].
+
+Start and shutdown share lifecycle-body validation and refusal responses
+[observed: `src/middleware.ts`, `resolveLifecycleDevice`].
+
+The original simulator may reboot or start again. WebKit inspection is disabled
+because the bridge cannot reliably map its targets to a simulator UUID. The
+middleware uses same-origin helper routes in this mode. The restriction covers
+this server's interfaces, not independently launched servers or host tools
+[observed: `src/middleware.ts`].
+
 ## Prepared process handoff
 
 Only servers started with `--orphan` offer process ownership to the local
@@ -136,6 +168,13 @@ the process after a failed claim [observed: `src/session-owner.ts`].
 
 Adoption applies stream settings, STUN/TURN, CORS/frame origins, sharing, screenshot
 artifacts, and network capture fields/upstream before the CLI reports success.
+An orphan restricts requests to its startup device while awaiting ownership.
+Adoption may add `--single-device` for that same UUID; a different UUID is refused.
+The middleware applies the adopted policy before awaiting resource configuration,
+and existing execution sockets read the current policy for each message. Without
+the flag, adoption restores normal multi-device behavior; an explicit startup
+single-device policy cannot be removed or changed [observed: `src/index.ts`,
+`src/middleware.ts`, `src/session-configuration.ts`].
 Existing captures stop before the job's upstream is applied; requested capture must
 be active before success, and app installation/launch follows through normal typed
 `/exec-ws` actions. `/exec-ws` is not used to enable capture for this handoff.
